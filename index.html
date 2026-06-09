@@ -261,6 +261,10 @@
   <aside>
     <div class="card">
       <h2>框選範圍(原始圖片像素)</h2>
+      <label style="display:flex; align-items:center; gap:7px; margin:-2px 0 11px; font-size:12px; color:var(--muted); cursor:pointer;">
+        <input id="keepSel" type="checkbox" checked style="cursor:pointer;">
+        載入新圖時保留目前框選位置
+      </label>
       <div class="fields">
         <div class="field"><label for="fLeft">left</label><input id="fLeft" type="number" disabled></div>
         <div class="field"><label for="fTop">top</label><input id="fTop" type="number" disabled></div>
@@ -344,6 +348,7 @@
   const openBtn = document.getElementById('openBtn');
   const pasteBtn = document.getElementById('pasteBtn');
   const clearSelBtn = document.getElementById('clearSelBtn');
+  const keepSel = document.getElementById('keepSel');
 
   const zoomInBtn = document.getElementById('zoomIn');
   const zoomOutBtn = document.getElementById('zoomOut');
@@ -428,9 +433,15 @@
       stage.hidden = false;
       empty.hidden = true;
       setZoomEnabled(true);
-      clearSelection();
+      // 載入新圖時保留既有框選(依新圖尺寸夾範圍),方便連續對多張圖比對同一區域
+      if (keepSel.checked && sel) {
+        setSel(normSel(sel), { skipOutputs: true });
+      } else {
+        clearSelection();
+      }
       imgMeta.innerHTML = `尺寸:<b>${natW} × ${natH}</b> px`;
       fitToView();
+      updateOutputs();
     };
     probe.onerror = () => showToast('圖片載入失敗');
     probe.src = src;
