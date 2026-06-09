@@ -1,0 +1,864 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OCR 區域擷取工具</title>
+<style>
+  :root {
+    --bg: #1e1f22;
+    --panel: #2b2d31;
+    --panel-2: #232428;
+    --border: #3a3c42;
+    --text: #e6e7ea;
+    --muted: #9a9da3;
+    --accent: #4f8cff;
+    --accent-soft: rgba(79, 140, 255, 0.18);
+    --ok: #3ec97a;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: -apple-system, "PingFang TC", "Microsoft JhengHei", "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  header {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  header h1 {
+    font-size: 15px;
+    margin: 0 12px 0 0;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .btn {
+    appearance: none;
+    border: 1px solid var(--border);
+    background: var(--panel-2);
+    color: var(--text);
+    padding: 7px 13px;
+    border-radius: 7px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background .15s, border-color .15s;
+    white-space: nowrap;
+  }
+  .btn:hover { background: #34363c; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); }
+  .btn.primary:hover { background: #3f7af0; }
+  .btn:disabled { opacity: .4; cursor: not-allowed; }
+  .hint { color: var(--muted); font-size: 12px; }
+  .spacer { flex: 1 1 auto; }
+
+  .zoom-group { display: flex; align-items: center; gap: 6px; }
+  .zoom-group .btn { padding: 5px 10px; }
+  #zoomLabel { font-size: 12px; color: var(--muted); min-width: 46px; text-align: center; }
+
+  main {
+    flex: 1 1 auto;
+    display: flex;
+    min-height: 0;
+  }
+
+  /* Canvas / stage area */
+  #stageWrap {
+    flex: 1 1 auto;
+    position: relative;
+    overflow: auto;
+    background:
+      linear-gradient(45deg, #26272b 25%, transparent 25%),
+      linear-gradient(-45deg, #26272b 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, #26272b 75%),
+      linear-gradient(-45deg, transparent 75%, #26272b 75%);
+    background-size: 22px 22px;
+    background-position: 0 0, 0 11px, 11px -11px, -11px 0;
+    background-color: #1b1c1f;
+  }
+  #stage {
+    position: relative;
+    margin: auto;
+    transform-origin: top left;
+  }
+  #img {
+    display: block;
+    user-select: none;
+    -webkit-user-drag: none;
+    image-rendering: auto;
+  }
+  #overlay {
+    position: absolute;
+    inset: 0;
+    cursor: crosshair;
+  }
+
+  /* Empty state */
+  #empty {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    color: var(--muted);
+    pointer-events: none;
+    text-align: center;
+    padding: 20px;
+  }
+  #empty[hidden] { display: none; }
+  #empty .big { font-size: 17px; color: var(--text); }
+  #empty .icon { font-size: 46px; opacity: .5; }
+  #stageWrap.dragover { outline: 2px dashed var(--accent); outline-offset: -10px; }
+
+  /* Selection box */
+  .sel {
+    position: absolute;
+    border: 1.5px solid var(--accent);
+    background: var(--accent-soft);
+    box-shadow: 0 0 0 9999px rgba(0,0,0,0.35);
+    cursor: move;
+  }
+  .handle {
+    position: absolute;
+    width: 11px;
+    height: 11px;
+    background: #fff;
+    border: 1.5px solid var(--accent);
+    border-radius: 2px;
+    transform: translate(-50%, -50%);
+  }
+  .handle.nw { left: 0;   top: 0;   cursor: nwse-resize; }
+  .handle.n  { left: 50%; top: 0;   cursor: ns-resize; }
+  .handle.ne { left: 100%;top: 0;   cursor: nesw-resize; }
+  .handle.e  { left: 100%;top: 50%; cursor: ew-resize; }
+  .handle.se { left: 100%;top: 100%;cursor: nwse-resize; }
+  .handle.s  { left: 50%; top: 100%;cursor: ns-resize; }
+  .handle.sw { left: 0;   top: 100%;cursor: nesw-resize; }
+  .handle.w  { left: 0;   top: 50%; cursor: ew-resize; }
+  .sel-size {
+    position: absolute;
+    top: -24px;
+    left: 0;
+    background: var(--accent);
+    color: #fff;
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    white-space: nowrap;
+    pointer-events: none;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Side panel */
+  aside {
+    flex: 0 0 290px;
+    background: var(--panel);
+    border-left: 1px solid var(--border);
+    padding: 16px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  .card { background: var(--panel-2); border: 1px solid var(--border); border-radius: 9px; padding: 13px; }
+  .card h2 { margin: 0 0 10px; font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: .04em; text-transform: uppercase; }
+  .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field label { font-size: 11px; color: var(--muted); }
+  .field input {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 7px 8px;
+    font-size: 14px;
+    font-variant-numeric: tabular-nums;
+  }
+  .field input:focus { outline: none; border-color: var(--accent); }
+  .field input:disabled { opacity: .45; }
+
+  pre#json {
+    margin: 0;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 11px;
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: #cfe0ff;
+    overflow-x: auto;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    white-space: pre;
+  }
+  .row { display: flex; gap: 8px; }
+  .row .btn { flex: 1; }
+  .meta { font-size: 12px; color: var(--muted); line-height: 1.7; }
+  .meta b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .kbd { display: inline-block; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; font-size: 11px; font-family: monospace; }
+  .toast {
+    position: fixed;
+    bottom: 22px;
+    left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    background: var(--ok);
+    color: #06351b;
+    font-weight: 600;
+    padding: 9px 18px;
+    border-radius: 8px;
+    font-size: 13px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .2s, transform .2s;
+    z-index: 50;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+<header>
+  <h1>OCR 區域擷取工具</h1>
+  <button class="btn primary" id="openBtn">開啟圖片</button>
+  <button class="btn" id="pasteBtn">貼上截圖</button>
+  <button class="btn" id="clearSelBtn" disabled>清除框選</button>
+  <span class="hint">可直接 <span class="kbd">Ctrl/Cmd+V</span> 貼上,或把圖片拖進來</span>
+  <span class="spacer"></span>
+  <div class="zoom-group">
+    <button class="btn" id="zoomOut" disabled>−</button>
+    <span id="zoomLabel">100%</span>
+    <button class="btn" id="zoomIn" disabled>＋</button>
+    <button class="btn" id="zoomFit" disabled>符合</button>
+    <button class="btn" id="zoom100" disabled>1:1</button>
+  </div>
+  <input type="file" id="fileInput" accept="image/*" hidden>
+</header>
+
+<main>
+  <div id="stageWrap">
+    <div id="stage" hidden>
+      <img id="img" alt="">
+      <div id="overlay"></div>
+    </div>
+    <div id="empty">
+      <div class="icon">🖼️</div>
+      <div class="big">把截圖貼上 / 拖進來,或點「開啟圖片」</div>
+      <div>接著在畫面上拖曳一個框,就會顯示範圍座標</div>
+    </div>
+  </div>
+
+  <aside>
+    <div class="card">
+      <h2>框選範圍(原始圖片像素)</h2>
+      <div class="fields">
+        <div class="field"><label for="fLeft">left</label><input id="fLeft" type="number" disabled></div>
+        <div class="field"><label for="fTop">top</label><input id="fTop" type="number" disabled></div>
+        <div class="field"><label for="fWidth">width</label><input id="fWidth" type="number" disabled></div>
+        <div class="field"><label for="fHeight">height</label><input id="fHeight" type="number" disabled></div>
+      </div>
+      <div style="margin-top:12px;">
+        <label style="font-size:11px; color:var(--muted); display:block; margin-bottom:5px;">貼上 JSON 跳到指定範圍</label>
+        <textarea id="jsonIn" rows="3" placeholder='{ "left": 859, "top": 714, "width": 202, "height": 34 }'
+          style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--text); border-radius:6px; padding:8px; font-size:12px; font-family:'SF Mono',Menlo,Consolas,monospace; resize:vertical;"></textarea>
+        <div class="row" style="margin-top:8px;">
+          <button class="btn primary" id="applyJsonBtn">套用並跳至範圍</button>
+        </div>
+        <div id="jsonInErr" style="font-size:11px; color:#ff7b72; margin-top:6px; min-height:14px;"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>JSON 輸出</h2>
+      <pre id="json">{
+  "left": 0,
+  "top": 0,
+  "width": 0,
+  "height": 0
+}</pre>
+      <div class="row" style="margin-top:10px;">
+        <button class="btn primary" id="copyJson" disabled>複製 JSON</button>
+        <button class="btn" id="copyValues" disabled>複製數值</button>
+      </div>
+      <div class="field" style="margin-top:10px;">
+        <label for="cropPrefix">檔名前綴</label>
+        <input id="cropPrefix" type="text" value="crop" placeholder="crop"
+          style="background:var(--bg); border:1px solid var(--border); color:var(--text); border-radius:6px; padding:7px 8px; font-size:13px;">
+      </div>
+      <label style="display:flex; align-items:center; gap:7px; margin-top:8px; font-size:12px; color:var(--muted); cursor:pointer;">
+        <input id="cropSuffix" type="checkbox" checked style="cursor:pointer;">
+        檔名加入座標後綴(_left_top_寬x高)
+      </label>
+      <div id="cropNamePreview" style="font-size:11px; color:var(--muted); margin-top:6px; font-family:'SF Mono',Menlo,Consolas,monospace; word-break:break-all;"></div>
+      <div class="row" style="margin-top:8px; align-items:center;">
+        <select id="cropFormat" class="btn" style="flex:0 0 auto;">
+          <option value="image/png">PNG</option>
+          <option value="image/jpeg">JPEG</option>
+        </select>
+        <button class="btn" id="cropBtn" disabled style="flex:1;">框選區域另存新檔</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>圖片資訊</h2>
+      <div class="meta" id="imgMeta">尚未載入圖片</div>
+    </div>
+
+    <div class="card">
+      <h2>操作說明</h2>
+      <div class="meta">
+        • 拖曳建立框選<br>
+        • 拖框內部可移動<br>
+        • 拖 8 個控制點可縮放<br>
+        • <span class="kbd">方向鍵</span> 移動 1px<br>
+        • <span class="kbd">Shift</span>+方向鍵 縮放<br>
+        • <span class="kbd">Esc</span> 取消框選
+      </div>
+    </div>
+  </aside>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(() => {
+  "use strict";
+
+  const stageWrap = document.getElementById('stageWrap');
+  const stage = document.getElementById('stage');
+  const img = document.getElementById('img');
+  const overlay = document.getElementById('overlay');
+  const empty = document.getElementById('empty');
+
+  const fileInput = document.getElementById('fileInput');
+  const openBtn = document.getElementById('openBtn');
+  const pasteBtn = document.getElementById('pasteBtn');
+  const clearSelBtn = document.getElementById('clearSelBtn');
+
+  const zoomInBtn = document.getElementById('zoomIn');
+  const zoomOutBtn = document.getElementById('zoomOut');
+  const zoomFitBtn = document.getElementById('zoomFit');
+  const zoom100Btn = document.getElementById('zoom100');
+  const zoomLabel = document.getElementById('zoomLabel');
+
+  const fLeft = document.getElementById('fLeft');
+  const fTop = document.getElementById('fTop');
+  const fWidth = document.getElementById('fWidth');
+  const fHeight = document.getElementById('fHeight');
+  const jsonEl = document.getElementById('json');
+  const copyJsonBtn = document.getElementById('copyJson');
+  const copyValuesBtn = document.getElementById('copyValues');
+  const cropBtn = document.getElementById('cropBtn');
+  const imgMeta = document.getElementById('imgMeta');
+  const toast = document.getElementById('toast');
+
+  let natW = 0, natH = 0;      // 原始圖片像素尺寸
+  let scale = 1;               // 顯示縮放倍率 (display = natural * scale)
+  let sel = null;              // { left, top, width, height } 以「原始像素」為單位
+  let selEl = null;            // 框選 DOM
+  let hasImage = false;
+
+  // ---------- 工具函式 ----------
+  function showToast(msg) {
+    toast.textContent = msg;
+    toast.classList.add('show');
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(() => toast.classList.remove('show'), 1400);
+  }
+
+  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+  function setZoomEnabled(on) {
+    [zoomInBtn, zoomOutBtn, zoomFitBtn, zoom100Btn].forEach(b => b.disabled = !on);
+  }
+
+  function applyScale() {
+    stage.style.width = (natW * scale) + 'px';
+    stage.style.height = (natH * scale) + 'px';
+    img.style.width = (natW * scale) + 'px';
+    img.style.height = (natH * scale) + 'px';
+    zoomLabel.textContent = Math.round(scale * 100) + '%';
+    renderSelection();
+  }
+
+  function fitToView() {
+    const pad = 24;
+    const availW = stageWrap.clientWidth - pad;
+    const availH = stageWrap.clientHeight - pad;
+    scale = Math.min(1, availW / natW, availH / natH);
+    if (!isFinite(scale) || scale <= 0) scale = 1;
+    applyScale();
+  }
+
+  function setScale(newScale, anchorClient) {
+    const old = scale;
+    newScale = clamp(newScale, 0.05, 16);
+    if (newScale === old) return;
+    // 以指標位置為中心縮放
+    const rect = stage.getBoundingClientRect();
+    const ax = anchorClient ? anchorClient.x : rect.left + stageWrap.clientWidth / 2;
+    const ay = anchorClient ? anchorClient.y : rect.top + stageWrap.clientHeight / 2;
+    const imgX = (ax - rect.left) / old;
+    const imgY = (ay - rect.top) / old;
+    scale = newScale;
+    applyScale();
+    const newRect = stage.getBoundingClientRect();
+    stageWrap.scrollLeft += (imgX * scale + newRect.left - ax);
+    stageWrap.scrollTop += (imgY * scale + newRect.top - ay);
+  }
+
+  // ---------- 載入圖片 ----------
+  function loadImageFromSrc(src) {
+    const probe = new Image();
+    probe.onload = () => {
+      img.src = src;
+      natW = probe.naturalWidth;
+      natH = probe.naturalHeight;
+      hasImage = true;
+      stage.hidden = false;
+      empty.hidden = true;
+      setZoomEnabled(true);
+      clearSelection();
+      imgMeta.innerHTML = `尺寸:<b>${natW} × ${natH}</b> px`;
+      fitToView();
+    };
+    probe.onerror = () => showToast('圖片載入失敗');
+    probe.src = src;
+  }
+
+  function loadImageFromFile(file) {
+    if (!file || !file.type.startsWith('image/')) { showToast('不是圖片檔'); return; }
+    const reader = new FileReader();
+    reader.onload = e => loadImageFromSrc(e.target.result);
+    reader.readAsDataURL(file);
+  }
+
+  // ---------- 框選邏輯 ----------
+  function ensureSelEl() {
+    if (selEl) return selEl;
+    selEl = document.createElement('div');
+    selEl.className = 'sel';
+    const sizeTag = document.createElement('div');
+    sizeTag.className = 'sel-size';
+    selEl.appendChild(sizeTag);
+    ['nw','n','ne','e','se','s','sw','w'].forEach(pos => {
+      const h = document.createElement('div');
+      h.className = 'handle ' + pos;
+      h.dataset.handle = pos;
+      selEl.appendChild(h);
+    });
+    overlay.appendChild(selEl);
+    return selEl;
+  }
+
+  function renderSelection() {
+    if (!sel || !selEl) return;
+    selEl.style.left = (sel.left * scale) + 'px';
+    selEl.style.top = (sel.top * scale) + 'px';
+    selEl.style.width = (sel.width * scale) + 'px';
+    selEl.style.height = (sel.height * scale) + 'px';
+    selEl.querySelector('.sel-size').textContent = `${Math.round(sel.width)} × ${Math.round(sel.height)}`;
+  }
+
+  function normSel(s) {
+    // 整數化並夾在圖片範圍內
+    let left = Math.round(s.left);
+    let top = Math.round(s.top);
+    let width = Math.round(s.width);
+    let height = Math.round(s.height);
+    left = clamp(left, 0, natW);
+    top = clamp(top, 0, natH);
+    width = clamp(width, 0, natW - left);
+    height = clamp(height, 0, natH - top);
+    return { left, top, width, height };
+  }
+
+  function updateOutputs() {
+    const enable = !!(sel && sel.width >= 1 && sel.height >= 1);
+    clearSelBtn.disabled = !sel;
+    copyJsonBtn.disabled = !enable;
+    copyValuesBtn.disabled = !enable;
+    cropBtn.disabled = !enable;
+    [fLeft, fTop, fWidth, fHeight].forEach(f => f.disabled = !sel);
+    if (!sel) {
+      fLeft.value = fTop.value = fWidth.value = fHeight.value = '';
+      jsonEl.textContent = `{\n  "left": 0,\n  "top": 0,\n  "width": 0,\n  "height": 0\n}`;
+      return;
+    }
+    const n = normSel(sel);
+    fLeft.value = n.left; fTop.value = n.top; fWidth.value = n.width; fHeight.value = n.height;
+    jsonEl.textContent = `{\n  "left": ${n.left},\n  "top": ${n.top},\n  "width": ${n.width},\n  "height": ${n.height}\n}`;
+    if (typeof updateCropNamePreview === 'function') updateCropNamePreview();
+  }
+
+  function setSel(s, opts) {
+    sel = s;
+    if (sel) {
+      ensureSelEl();
+      renderSelection();
+    }
+    if (!opts || !opts.skipOutputs) updateOutputs();
+  }
+
+  function clearSelection() {
+    sel = null;
+    if (selEl) { selEl.remove(); selEl = null; }
+    updateOutputs();
+  }
+
+  // overlay 座標(client) -> 原始像素座標
+  function clientToImg(clientX, clientY) {
+    const rect = overlay.getBoundingClientRect();
+    return {
+      x: clamp((clientX - rect.left) / scale, 0, natW),
+      y: clamp((clientY - rect.top) / scale, 0, natH),
+    };
+  }
+
+  // ---------- 滑鼠互動:建立 / 移動 / 縮放 ----------
+  let drag = null; // { mode, startImg, orig, handle }
+
+  overlay.addEventListener('pointerdown', e => {
+    if (!hasImage || e.button !== 0) return;
+    overlay.setPointerCapture(e.pointerId);
+    const p = clientToImg(e.clientX, e.clientY);
+    drag = { mode: 'create', startImg: p };
+    setSel({ left: p.x, top: p.y, width: 0, height: 0 }, { skipOutputs: true });
+    e.preventDefault();
+  });
+
+  // 移動 / 縮放(在框上按下)
+  function onSelPointerDown(e) {
+    if (!sel || e.button !== 0) return;
+    e.stopPropagation();
+    overlay.setPointerCapture(e.pointerId);
+    const p = clientToImg(e.clientX, e.clientY);
+    const handle = e.target.dataset.handle;
+    drag = {
+      mode: handle ? 'resize' : 'move',
+      handle,
+      startImg: p,
+      orig: { ...sel },
+    };
+    e.preventDefault();
+  }
+
+  overlay.addEventListener('pointermove', e => {
+    if (!drag) return;
+    const p = clientToImg(e.clientX, e.clientY);
+
+    if (drag.mode === 'create') {
+      const x1 = drag.startImg.x, y1 = drag.startImg.y;
+      setSel({
+        left: Math.min(x1, p.x),
+        top: Math.min(y1, p.y),
+        width: Math.abs(p.x - x1),
+        height: Math.abs(p.y - y1),
+      });
+    } else if (drag.mode === 'move') {
+      const dx = p.x - drag.startImg.x;
+      const dy = p.y - drag.startImg.y;
+      const o = drag.orig;
+      setSel({
+        left: clamp(o.left + dx, 0, natW - o.width),
+        top: clamp(o.top + dy, 0, natH - o.height),
+        width: o.width, height: o.height,
+      });
+    } else if (drag.mode === 'resize') {
+      const o = drag.orig;
+      let l = o.left, t = o.top, r = o.left + o.width, b = o.top + o.height;
+      const h = drag.handle;
+      if (h.includes('w')) l = clamp(p.x, 0, r);
+      if (h.includes('e')) r = clamp(p.x, l, natW);
+      if (h.includes('n')) t = clamp(p.y, 0, b);
+      if (h.includes('s')) b = clamp(p.y, t, natH);
+      setSel({ left: l, top: t, width: r - l, height: b - t });
+    }
+  });
+
+  function endDrag(e) {
+    if (!drag) return;
+    if (drag.mode === 'create' && sel && (sel.width < 2 || sel.height < 2)) {
+      clearSelection();
+    } else if (sel) {
+      setSel(normSel(sel));
+    }
+    drag = null;
+    try { overlay.releasePointerCapture(e.pointerId); } catch (_) {}
+  }
+  overlay.addEventListener('pointerup', endDrag);
+  overlay.addEventListener('pointercancel', endDrag);
+
+  // 事件委派:框 / 控制點上的按下
+  overlay.addEventListener('pointerdown', e => {
+    if (e.target.classList.contains('handle') || e.target.classList.contains('sel')) {
+      onSelPointerDown(e);
+    }
+  }, true);
+
+  // ---------- 手動輸入數值 ----------
+  [fLeft, fTop, fWidth, fHeight].forEach(inp => {
+    inp.addEventListener('input', () => {
+      if (!sel) return;
+      const s = {
+        left: parseFloat(fLeft.value) || 0,
+        top: parseFloat(fTop.value) || 0,
+        width: parseFloat(fWidth.value) || 0,
+        height: parseFloat(fHeight.value) || 0,
+      };
+      sel = s;
+      ensureSelEl();
+      renderSelection();
+      // 不在 input 中重寫欄位,避免游標跳動;只更新 JSON
+      const n = normSel(sel);
+      jsonEl.textContent = `{\n  "left": ${n.left},\n  "top": ${n.top},\n  "width": ${n.width},\n  "height": ${n.height}\n}`;
+    });
+    inp.addEventListener('blur', () => { if (sel) setSel(normSel(sel)); });
+  });
+
+  // ---------- 貼上 JSON 跳至範圍 ----------
+  const jsonIn = document.getElementById('jsonIn');
+  const jsonInErr = document.getElementById('jsonInErr');
+  const applyJsonBtn = document.getElementById('applyJsonBtn');
+
+  function parseRegionInput(text) {
+    text = (text || '').trim();
+    if (!text) throw new Error('請先貼上 JSON');
+    let obj;
+    try {
+      obj = JSON.parse(text);
+    } catch (_) {
+      // 容錯:允許貼上不含大括號的片段,如  "left": 859, "top": 714, ...
+      try { obj = JSON.parse('{' + text.replace(/^\{|\}$/g, '') + '}'); }
+      catch (e2) { throw new Error('JSON 格式錯誤'); }
+    }
+    const num = k => {
+      const v = obj[k];
+      const n = typeof v === 'string' ? parseFloat(v) : v;
+      if (typeof n !== 'number' || !isFinite(n)) throw new Error('缺少或無效的欄位:' + k);
+      return n;
+    };
+    return { left: num('left'), top: num('top'), width: num('width'), height: num('height') };
+  }
+
+  function scrollSelIntoView() {
+    if (!sel) return;
+    const cx = (sel.left + sel.width / 2) * scale;
+    const cy = (sel.top + sel.height / 2) * scale;
+    stageWrap.scrollLeft = cx - stageWrap.clientWidth / 2;
+    stageWrap.scrollTop = cy - stageWrap.clientHeight / 2;
+  }
+
+  applyJsonBtn.addEventListener('click', () => {
+    jsonInErr.textContent = '';
+    if (!hasImage) { jsonInErr.textContent = '請先載入圖片'; return; }
+    let region;
+    try {
+      region = parseRegionInput(jsonIn.value);
+    } catch (e) {
+      jsonInErr.textContent = e.message;
+      return;
+    }
+    setSel(normSel(region));
+    scrollSelIntoView();
+    showToast('已跳至指定範圍');
+  });
+
+  // ---------- 鍵盤微調 ----------
+  window.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { if (sel) clearSelection(); return; }
+    if (!sel) return;
+    const tag = document.activeElement && document.activeElement.tagName;
+    if (tag === 'INPUT') return; // 數值欄位中不攔截
+    const arrows = ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'];
+    if (!arrows.includes(e.key)) return;
+    e.preventDefault();
+    const step = e.altKey ? 10 : 1;
+    let { left, top, width, height } = sel;
+    if (e.shiftKey) {
+      if (e.key === 'ArrowLeft') width -= step;
+      if (e.key === 'ArrowRight') width += step;
+      if (e.key === 'ArrowUp') height -= step;
+      if (e.key === 'ArrowDown') height += step;
+      width = clamp(width, 1, natW - left);
+      height = clamp(height, 1, natH - top);
+    } else {
+      if (e.key === 'ArrowLeft') left -= step;
+      if (e.key === 'ArrowRight') left += step;
+      if (e.key === 'ArrowUp') top -= step;
+      if (e.key === 'ArrowDown') top += step;
+      left = clamp(left, 0, natW - width);
+      top = clamp(top, 0, natH - height);
+    }
+    setSel({ left, top, width, height });
+  });
+
+  // ---------- 複製 / 裁切 ----------
+  async function copyText(text, msg) {
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast(msg || '已複製');
+    } catch (_) {
+      // fallback
+      const ta = document.createElement('textarea');
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); showToast(msg || '已複製'); }
+      catch (e2) { showToast('複製失敗'); }
+      ta.remove();
+    }
+  }
+
+  copyJsonBtn.addEventListener('click', () => copyText(jsonEl.textContent, '已複製 JSON'));
+  copyValuesBtn.addEventListener('click', () => {
+    const n = normSel(sel);
+    copyText(`"left": ${n.left}, "top": ${n.top}, "width": ${n.width}, "height": ${n.height}`, '已複製數值');
+  });
+
+  const cropFormat = document.getElementById('cropFormat');
+
+  function cropToBlob() {
+    const n = normSel(sel);
+    if (n.width < 1 || n.height < 1) return null;
+    const type = cropFormat.value;
+    const c = document.createElement('canvas');
+    c.width = n.width; c.height = n.height;
+    const ctx = c.getContext('2d');
+    if (type === 'image/jpeg') { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, n.width, n.height); }
+    ctx.drawImage(img, n.left, n.top, n.width, n.height, 0, 0, n.width, n.height);
+    const quality = type === 'image/jpeg' ? 0.95 : undefined;
+    return new Promise(resolve => c.toBlob(b => resolve({ blob: b, name: defaultCropName(n, type) }), type, quality));
+  }
+
+  const cropPrefix = document.getElementById('cropPrefix');
+  const cropSuffix = document.getElementById('cropSuffix');
+  const cropNamePreview = document.getElementById('cropNamePreview');
+
+  function defaultCropName(n, type) {
+    const ext = type === 'image/jpeg' ? 'jpg' : 'png';
+    let prefix = (cropPrefix.value || '').trim().replace(/[\\/:*?"<>|]/g, '_'); // 去除檔名非法字元
+    if (!prefix) prefix = 'crop';
+    const suffix = cropSuffix.checked ? `_${n.left}_${n.top}_${n.width}x${n.height}` : '';
+    return `${prefix}${suffix}.${ext}`;
+  }
+
+  function updateCropNamePreview() {
+    const n = sel ? normSel(sel) : { left: 0, top: 0, width: 0, height: 0 };
+    cropNamePreview.textContent = '檔名:' + defaultCropName(n, cropFormat.value);
+  }
+  [cropPrefix, cropSuffix, cropFormat].forEach(el => {
+    el.addEventListener('input', updateCropNamePreview);
+    el.addEventListener('change', updateCropNamePreview);
+  });
+
+  cropBtn.addEventListener('click', async () => {
+    if (!sel) return;
+    const result = await cropToBlob();
+    if (!result || !result.blob) return;
+    const { blob, name } = result;
+
+    // 優先使用 File System Access API:彈出系統「另存新檔」對話框
+    if (window.showSaveFilePicker) {
+      const ext = name.endsWith('.jpg') ? '.jpg' : '.png';
+      const accept = ext === '.jpg' ? { 'image/jpeg': ['.jpg', '.jpeg'] } : { 'image/png': ['.png'] };
+      try {
+        const handle = await window.showSaveFilePicker({
+          suggestedName: name,
+          types: [{ description: '圖片檔', accept }],
+        });
+        const writable = await handle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+        showToast('已另存:' + handle.name);
+        return;
+      } catch (err) {
+        if (err && err.name === 'AbortError') return; // 使用者取消
+        // 其餘錯誤 → 退回下載
+      }
+    }
+
+    // 後備:直接下載到「下載」資料夾
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    showToast('已下載:' + name);
+  });
+
+  // ---------- 縮放控制 ----------
+  zoomInBtn.addEventListener('click', () => setScale(scale * 1.25));
+  zoomOutBtn.addEventListener('click', () => setScale(scale / 1.25));
+  zoomFitBtn.addEventListener('click', fitToView);
+  zoom100Btn.addEventListener('click', () => setScale(1));
+
+  stageWrap.addEventListener('wheel', e => {
+    if (!hasImage || !(e.ctrlKey || e.metaKey)) return;
+    e.preventDefault();
+    const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+    setScale(scale * factor, { x: e.clientX, y: e.clientY });
+  }, { passive: false });
+
+  // ---------- 開檔 / 貼上 / 拖放 ----------
+  openBtn.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', e => {
+    if (e.target.files[0]) loadImageFromFile(e.target.files[0]);
+    fileInput.value = '';
+  });
+
+  clearSelBtn.addEventListener('click', clearSelection);
+
+  pasteBtn.addEventListener('click', async () => {
+    try {
+      const items = await navigator.clipboard.read();
+      for (const it of items) {
+        const type = it.types.find(t => t.startsWith('image/'));
+        if (type) {
+          const blob = await it.getType(type);
+          loadImageFromFile(new File([blob], 'pasted.png', { type }));
+          return;
+        }
+      }
+      showToast('剪貼簿沒有圖片');
+    } catch (_) {
+      showToast('請改用 Ctrl/Cmd+V 貼上');
+    }
+  });
+
+  window.addEventListener('paste', e => {
+    const items = e.clipboardData && e.clipboardData.items;
+    if (!items) return;
+    for (const it of items) {
+      if (it.type.startsWith('image/')) {
+        loadImageFromFile(it.getAsFile());
+        e.preventDefault();
+        return;
+      }
+    }
+  });
+
+  ['dragenter', 'dragover'].forEach(ev =>
+    stageWrap.addEventListener(ev, e => { e.preventDefault(); stageWrap.classList.add('dragover'); }));
+  ['dragleave', 'drop'].forEach(ev =>
+    stageWrap.addEventListener(ev, e => { e.preventDefault(); if (ev === 'drop' || e.target === stageWrap) stageWrap.classList.remove('dragover'); }));
+  stageWrap.addEventListener('drop', e => {
+    const f = e.dataTransfer.files[0];
+    if (f) loadImageFromFile(f);
+  });
+
+  window.addEventListener('resize', () => { /* 保持目前縮放,不自動 fit */ });
+
+})();
+</script>
+</body>
+</html>
