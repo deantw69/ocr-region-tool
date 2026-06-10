@@ -729,7 +729,10 @@
     }
   }
 
-  copyJsonBtn.addEventListener('click', () => copyText(jsonEl.textContent, '已複製 JSON'));
+  copyJsonBtn.addEventListener('click', () => {
+    const n = normSel(sel);
+    copyText(`{"left": ${n.left}, "top": ${n.top}, "width": ${n.width}, "height": ${n.height}}`, '已複製 JSON');
+  });
   copyValuesBtn.addEventListener('click', () => {
     const n = normSel(sel);
     copyText(`"left": ${n.left}, "top": ${n.top}, "width": ${n.width}, "height": ${n.height}`, '已複製數值');
